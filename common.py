@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import dataclasses
 import ipaddress
+import requests
 from typing import Optional, TypeVar, Iterator, Type
 import contextlib
 from types import TracebackType
@@ -539,6 +540,13 @@ def git_repo_setup(repo_dir: str, *, repo_wipe: bool = True, url: str, branch: s
 
     logger.info(f"Cloning repo {url} to {repo_dir}")
     Repo.clone_from(url, repo_dir, branch=branch)
+
+
+def github_repo_setup(repo_dir: str, *, repo_wipe: bool = True, url: str, pullnumber: str) -> None:
+    response = requests.get(f"https://api.github.com/repos/openshift/dpu-operator/pulls/{pullnumber}")
+    branch = response.json()["head"]["ref"]
+
+    git_repo_setup(repo_dir, repo_wipe=True, url=url, branch=branch)
 
 
 def extract_version_or_panic(version: str) -> str:

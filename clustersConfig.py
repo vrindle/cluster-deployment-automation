@@ -141,6 +141,7 @@ def current_host() -> str:
 class ClustersConfig:
     name: str
     kubeconfig: str
+    dpu_operator_pull_number: Optional[str] = None
     api_vip: dict[str, str]
     ingress_vip: dict[str, str]
     external_port: str = "auto"
@@ -176,6 +177,8 @@ class ClustersConfig:
         self.set_cc_defaults(cc)
         if "proxy" in cc:
             self.proxy = cc["proxy"]
+        if "dpu_operator_pull_number" in cc:
+            self.dpu_operator_pull_number = cc["dpu_operator_pull_number"]
         if "noproxy" in cc:
             self.noproxy = cc["noproxy"]
         if "external_port" in cc:
@@ -278,6 +281,8 @@ class ClustersConfig:
             cc["workers"] = []
         if "kubeconfig" not in cc:
             cc["kubeconfig"] = path.join(getcwd(), f'kubeconfig.{cc["name"]}')
+        if "dpu_operator_pull_number" not in cc:
+            cc["dpu_operator_pull_number"] = None
         if "preconfig" not in cc:
             cc["preconfig"] = []
         if "postconfig" not in cc:

@@ -11,7 +11,7 @@ from typing import Optional, Match
 from logger import logger
 from clustersConfig import ExtraConfigArgs
 import reglocal
-from common import git_repo_setup
+from common import git_repo_setup, github_repo_setup
 from dpuVendor import init_vendor_plugin, IpuPlugin
 
 DPU_OPERATOR_REPO = "https://github.com/openshift/dpu-operator.git"
@@ -188,10 +188,13 @@ def copy_local_registry_certs(host: host.Host, path: str) -> None:
         host.copy_to(f"{directory}/{file}", f"{path}/{file}")
 
 
-def build_dpu_operator_images() -> str:
+def build_dpu_operator_images(pullnumber: Optional[str] = None) -> str:
     logger.info("Building dpu operator images")
     lh = host.LocalHost()
-    git_repo_setup(REPO_DIR, repo_wipe=True, url=DPU_OPERATOR_REPO, branch="main")
+    if not pullnumber:
+        git_repo_setup(REPO_DIR, repo_wipe=True, url=DPU_OPERATOR_REPO, branch="main")
+    else:
+        github_repo_setup(REPO_DIR, repo_wipe=True, url=DPU_OPERATOR_REPO, pullnumber=pullnumber)
     update_dockerfiles_with_ose_images(REPO_DIR)
 
     # Start a local registry to store dpu-operator images
@@ -208,11 +211,16 @@ def build_dpu_operator_images() -> str:
     return registry
 
 
-def start_dpu_operator(h: host.Host, client: K8sClient, operator_image: str, daemon_image: str, repo_wipe: bool = False) -> None:
+def start_dpu_operator(h: host.Host, client: K8sClient, operator_image: str, daemon_image: str, pullnumber: Optional[str] = None, repo_wipe: bool = False) -> None:
     logger.info(f"Deploying dpu operator containers on {h.hostname()}")
     if repo_wipe:
         h.run(f"rm -rf {REPO_DIR}")
         h.run_or_die(f"git clone {DPU_OPERATOR_REPO}")
+        if pullnumber:
+            response = requests.get(f"https://api.github.com/repos/openshift/dpu-operator/pulls/f{pullnumber}")
+            branch = response.json()["head"]["ref"]
+            h.run(f"git fetch origin pull/{pullnumber}/head:{branch}")
+            h.run(f"git checkout {branch}")
         render_local_images_yaml(operator_image=operator_image, daemon_image=daemon_image, outfilename="/tmp/dpu-local-images-template.yaml", pull_policy="IfNotPresent")
         h.copy_to("/tmp/dpu-local-images-template.yaml", f"{REPO_DIR}/config/dev/local-images-template.yaml")
 
@@ -252,6 +260,7 @@ def ExtraConfigDpu(cc: ClustersConfig, cfg: ExtraConfigArgs, futures: dict[str, 
     [f.result() for (_, f) in futures.items()]
     logger.info("Running post config step to start DPU operator on IPU")
 
+    pullnumber = cc.dpu_operator_pull_number
     dpu_node = cc.masters[0]
     assert dpu_node.ip is not None
     acc = host.Host(dpu_node.ip)
@@ -260,7 +269,7 @@ def ExtraConfigDpu(cc: ClustersConfig, cfg: ExtraConfigArgs, futures: dict[str, 
     client = K8sClient(MICROSHIFT_KUBECONFIG, acc)
 
     if cfg.rebuild_dpu_operators_images:
-        registry = build_dpu_operator_images()
+        registry = build_dpu_operator_images(pullnumber)
     else:
         logger.info("Will not rebuild dpu-operator images")
         registry = _ensure_local_registry_running(lh, delete_all=False)
@@ -280,7 +289,7 @@ def ExtraConfigDpu(cc: ClustersConfig, cfg: ExtraConfigArgs, futures: dict[str, 
         acc.run_or_die(cmd)
     vendor_plugin.build_and_start(acc, client, registry)
 
-    start_dpu_operator(acc, client, operator_image, daemon_image, repo_wipe=True)
+    start_dpu_operator(acc, client, operator_image, daemon_image, pullnumber, repo_wipe=True)
 
     # Disable firewall to ensure host-side can reach dpu
     acc.run("systemctl stop firewalld")
@@ -311,12 +320,12 @@ def ExtraConfigDpu(cc: ClustersConfig, cfg: ExtraConfigArgs, futures: dict[str, 
 
 def ExtraConfigDpuHost(cc: ClustersConfig, cfg: ExtraConfigArgs, futures: dict[str, Future[Optional[host.Result]]]) -> None:
     logger.info("Running post config step to start DPU operator on Host")
-
     lh = host.LocalHost()
     client = K8sClient(cc.kubeconfig)
+    pullnumber = cc.dpu_operator_pull_number
 
     if cfg.rebuild_dpu_operators_images:
-        registry = build_dpu_operator_images()
+        registry = build_dpu_operator_images(pullnumber)
     else:
         logger.info("Will not rebuild dpu-operator images")
         registry = _ensure_local_registry_running(lh, delete_all=False)
@@ -331,7 +340,7 @@ def ExtraConfigDpuHost(cc: ClustersConfig, cfg: ExtraConfigArgs, futures: dict[s
     vendor_plugin = init_vendor_plugin(h)
     vendor_plugin.build_and_start(lh, client, registry)
 
-    start_dpu_operator(lh, client, operator_image, daemon_image)
+    start_dpu_operator(lh, client, operator_image, daemon_image, pullnumber)
 
     def helper(h: host.Host, node: NodeConfig) -> Optional[host.Result]:
         # Temporary workaround, remove once 4.16 installations are working
