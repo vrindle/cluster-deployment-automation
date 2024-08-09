@@ -10,6 +10,8 @@ class ClusterInfo:
         self.name = name
         self.provision_host = ""
         self.network_api_port = ""
+        self.bmc_imc_hostnames = []  # type: list[str]
+        self.ipu_mac_addresses = []  # type: list[str]
         self.workers = []  # type: list[str]
         self.bmcs = []  # type: list[str]
 
@@ -49,6 +51,9 @@ def load_all_cluster_info() -> dict[str, ClusterInfo]:
             cluster.provision_host = row["Name"]
             cluster.network_api_port = row["Ports"]
         elif row["Provision host"] == "no":
+            if row["Card type"] == "IPU-Cluster":
+                cluster.bmc_imc_hostnames.append(row["BMC/IMC hostname"])
+                cluster.ipu_mac_addresses.append(row["IPU MAC Address"])
             cluster.workers.append(row["Name"])
             bmc_host = row["IPMI"][8:] if "https://" in row["IPMI"] else row["IPMI"]
             cluster.bmcs.append(bmc_host)
